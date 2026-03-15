@@ -63,39 +63,47 @@ function transformMatcher(matcher: string | undefined): string | undefined {
   return transformed;
 }
 
+const claudeHookSchema = z.object({
+  type: z.string().optional(),
+  command: z.string().optional(),
+  timeout: z.number().optional(),
+});
+
+const claudeHooksSchema = z.record(z.unknown());
+
+const claudeSettingsSchema = z.object({
+  hooks: claudeHooksSchema.optional(),
+});
+
 /**
  * Migrate a Claude Code hook configuration to Gemini format
  */
 function migrateClaudeHook(claudeHook: unknown): unknown {
-  if (!claudeHook || typeof claudeHook !== 'object') {
+  const result = claudeHookSchema.safeParse(claudeHook);
+  if (!result.success) {
     return claudeHook;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-  const hook = claudeHook as Record<string, unknown>;
+  const hook = result.data;
   const migrated: Record<string, unknown> = {};
 
   // Map command field
-  if ('command' in hook) {
-    migrated['command'] = hook['command'];
-
+  if (hook.command) {
     // Replace CLAUDE_PROJECT_DIR with GEMINI_PROJECT_DIR in command
-    if (typeof migrated['command'] === 'string') {
-      migrated['command'] = migrated['command'].replace(
-        /\$CLAUDE_PROJECT_DIR/g,
-        '$GEMINI_PROJECT_DIR',
-      );
-    }
+    migrated['command'] = hook.command.replace(
+      /\$CLAUDE_PROJECT_DIR/g,
+      '$GEMINI_PROJECT_DIR',
+    );
   }
 
   // Map type field
-  if ('type' in hook && hook['type'] === 'command') {
+  if (hook.type === 'command') {
     migrated['type'] = 'command';
   }
 
   // Map timeout field (Claude uses seconds, Gemini uses seconds)
-  if ('timeout' in hook && typeof hook['timeout'] === 'number') {
-    migrated['timeout'] = hook['timeout'];
+  if (typeof hook.timeout === 'number') {
+    migrated['timeout'] = hook.timeout;
   }
 
   return migrated;
@@ -105,61 +113,55 @@ function migrateClaudeHook(claudeHook: unknown): unknown {
  * Migrate Claude Code hooks configuration to Gemini format
  */
 function migrateClaudeHooks(claudeConfig: unknown): Record<string, unknown> {
-  if (!claudeConfig || typeof claudeConfig !== 'object') {
+  const result = claudeSettingsSchema.safeParse(claudeConfig);
+  if (!result.success || !result.data.hooks) {
     return {};
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-  const config = claudeConfig as Record<string, unknown>;
+  const hooksSection = result.data.hooks;
   const geminiHooks: Record<string, unknown> = {};
 
-  // Check if there's a hooks section
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-  const hooksSection = config['hooks'] as Record<string, unknown> | undefined;
-  if (!hooksSection || typeof hooksSection !== 'object') {
-    return {};
-  }
-
   for (const [eventName, eventConfig] of Object.entries(hooksSection)) {
-    // Map event name
-    const geminiEventName = EVENT_MAPPING[eventName] || eventName;
-
+    // Skip if not an array (matches original behavior)
     if (!Array.isArray(eventConfig)) {
       continue;
     }
 
+    // Map event name
+    const geminiEventName = EVENT_MAPPING[eventName] || eventName;
+
     // Migrate each hook definition
-    const migratedDefinitions = eventConfig.map((def: unknown) => {
-      if (!def || typeof def !== 'object') {
-        return def;
-      }
+    const migratedDefinitions = eventConfig
+      .map((definition) => {
+        // Validate definition is an object
+        if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+          return null;
+        }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      const definition = def as Record<string, unknown>;
-      const migratedDef: Record<string, unknown> = {};
+        const migratedDef: Record<string, unknown> = {};
 
-      // Transform matcher
-      if (
-        'matcher' in definition &&
-        typeof definition['matcher'] === 'string'
-      ) {
-        migratedDef['matcher'] = transformMatcher(definition['matcher']);
-      }
+        // Transform matcher
+        if ('matcher' in definition && typeof definition.matcher === 'string') {
+          migratedDef['matcher'] = transformMatcher(definition.matcher);
+        }
 
-      // Copy sequential flag
-      if ('sequential' in definition) {
-        migratedDef['sequential'] = definition['sequential'];
-      }
+        // Copy sequential flag
+        if ('sequential' in definition && typeof definition.sequential === 'boolean') {
+          migratedDef['sequential'] = definition.sequential;
+        }
 
-      // Migrate hooks array
-      if ('hooks' in definition && Array.isArray(definition['hooks'])) {
-        migratedDef['hooks'] = definition['hooks'].map(migrateClaudeHook);
-      }
+        // Migrate hooks array
+        if ('hooks' in definition && Array.isArray(definition.hooks)) {
+          migratedDef['hooks'] = definition.hooks.map(migrateClaudeHook);
+        }
 
-      return migratedDef;
-    });
+        return migratedDef;
+      })
+      .filter((d): d is Record<string, unknown> => d !== null);
 
-    geminiHooks[geminiEventName] = migratedDefinitions;
+    if (migratedDefinitions.length > 0 || eventConfig.length === 0) {
+      geminiHooks[geminiEventName] = migratedDefinitions;
+    }
   }
 
   return geminiHooks;
@@ -184,11 +186,9 @@ export async function handleMigrateFromClaude() {
     sourceFile = claudeLocalSettingsPath;
     try {
       const content = fs.readFileSync(claudeLocalSettingsPath, 'utf-8');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      claudeSettings = JSON.parse(stripJsonComments(content)) as Record<
-        string,
-        unknown
-      >;
+      claudeSettings = claudeSettingsSchema.parse(
+        JSON.parse(stripJsonComments(content)),
+      );
     } catch (error) {
       debugLogger.error(
         `Error reading ${claudeLocalSettingsPath}: ${getErrorMessage(error)}`,
@@ -198,11 +198,9 @@ export async function handleMigrateFromClaude() {
     sourceFile = claudeSettingsPath;
     try {
       const content = fs.readFileSync(claudeSettingsPath, 'utf-8');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      claudeSettings = JSON.parse(stripJsonComments(content)) as Record<
-        string,
-        unknown
-      >;
+      claudeSettings = claudeSettingsSchema.parse(
+        JSON.parse(stripJsonComments(content)),
+      );
     } catch (error) {
       debugLogger.error(
         `Error reading ${claudeSettingsPath}: ${getErrorMessage(error)}`,
@@ -224,30 +222,35 @@ export async function handleMigrateFromClaude() {
   // Migrate hooks
   const migratedHooks = migrateClaudeHooks(claudeSettings);
 
+  // Load current Gemini settings
+  const settings = loadSettings(workingDir);
+
+  // Merge with existing hooks
+  const existingHooks = (settings.merged?.hooks || {}) as Record<
+    string,
+    unknown
+  >;
+
+  // If no hooks were found at all after migration, just log and return
   if (Object.keys(migratedHooks).length === 0) {
     debugLogger.log('No hooks found in Claude Code settings to migrate.');
     return;
   }
 
+  const mergedHooks: Record<string, unknown> = {
+    ...existingHooks,
+    ...migratedHooks,
+  };
+
   debugLogger.log(
     `Migrating ${Object.keys(migratedHooks).length} hook event(s)...`,
   );
 
-  // Load current Gemini settings
-  const settings = loadSettings(workingDir);
-
-  // Merge migrated hooks with existing hooks
-  const existingHooks = (settings.merged?.hooks || {}) as Record<
-    string,
-    unknown
-  >;
-  const mergedHooks = { ...existingHooks, ...migratedHooks };
-
-  // Update settings (setValue automatically saves)
+  const targetFile = '.gemini/settings.json';
   try {
     settings.setValue(SettingScope.Workspace, 'hooks', mergedHooks);
 
-    debugLogger.log('✓ Hooks successfully migrated to .gemini/settings.json');
+    debugLogger.log(`✓ Hooks successfully migrated to ${targetFile}`);
     debugLogger.log(
       '\nMigration complete! Please review the migrated hooks in .gemini/settings.json',
     );

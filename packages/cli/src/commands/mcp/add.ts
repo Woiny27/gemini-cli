@@ -228,10 +228,13 @@ export const addCommand: CommandModule = {
       .middleware((argv) => {
         // Handle -- separator args as server args if present
         if (argv['--']) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-          const existingArgs = (argv['args'] as Array<string | number>) || [];
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-          argv['args'] = [...existingArgs, ...(argv['--'] as string[])];
+          const existingArgs =
+            z.array(z.string().or(z.number())).optional().parse(argv['args']) ||
+            [];
+          argv['args'] = [
+            ...existingArgs,
+            ...z.array(z.string()).parse(argv['--']),
+          ];
         }
       }),
   handler: async (argv) => {
@@ -248,8 +251,12 @@ export const addCommand: CommandModule = {
         timeout: parsedArgs.timeout,
         trust: parsedArgs.trust,
         description: parsedArgs.description,
-        includeTools: parsedArgs['include-tools']?.flatMap((s) => s.split(',')),
-        excludeTools: parsedArgs['exclude-tools']?.flatMap((s) => s.split(',')),
+        includeTools: parsedArgs['include-tools']?.flatMap((s) =>
+          s.split(',').map((t) => t.trim()),
+        ),
+        excludeTools: parsedArgs['exclude-tools']?.flatMap((s) =>
+          s.split(',').map((t) => t.trim()),
+        ),
       },
     );
     await exitCli();

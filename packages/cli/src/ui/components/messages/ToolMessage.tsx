@@ -21,9 +21,9 @@ import {
   useFocusHint,
   FocusHint,
 } from './ToolShared.js';
-import { type Config, CoreToolCallStatus } from '@google/gemini-cli-core';
+import { type Config, CoreToolCallStatus, Kind } from '@google/gemini-cli-core';
 import { ShellInputPrompt } from '../ShellInputPrompt.js';
-import { useAlternateBuffer } from '../../hooks/useAlternateBuffer.js';
+import { SUBAGENT_MAX_LINES } from '../../constants.js';
 
 export type { TextEmphasis };
 
@@ -46,6 +46,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   description,
   resultDisplay,
   status,
+  kind,
   availableTerminalHeight,
   terminalWidth,
   emphasis = 'medium',
@@ -70,8 +71,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
     embeddedShellFocused,
   );
 
-  const isAlternateBuffer = useAlternateBuffer();
-
   const isThisShellFocusable = checkIsShellFocusable(name, status, config);
 
   const { shouldShowFocusHint } = useFocusHint(
@@ -91,12 +90,17 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         borderColor={borderColor}
         borderDimColor={borderDimColor}
       >
-        <ToolStatusIndicator status={status} name={name} />
+        <ToolStatusIndicator
+          status={status}
+          name={name}
+          isFocused={isThisShellFocused}
+        />
         <ToolInfo
           name={name}
           status={status}
           description={description}
           emphasis={emphasis}
+          progressMessage={progressMessage}
           originalRequestName={originalRequestName}
         />
         <FocusHint
@@ -107,13 +111,13 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
       </StickyHeader>
       <Box
         width={terminalWidth}
-        borderStyle={isAlternateBuffer ? undefined : 'round'}
+        borderStyle="round"
         borderColor={borderColor}
         borderDimColor={borderDimColor}
         borderTop={false}
         borderBottom={false}
-        borderLeft={!isAlternateBuffer}
-        borderRight={!isAlternateBuffer}
+        borderLeft={true}
+        borderRight={true}
         paddingX={1}
         flexDirection="column"
       >
@@ -131,6 +135,12 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           terminalWidth={terminalWidth}
           renderOutputAsMarkdown={renderOutputAsMarkdown}
           hasFocus={isThisShellFocused}
+          maxLines={
+            kind === Kind.Agent && availableTerminalHeight !== undefined
+              ? SUBAGENT_MAX_LINES
+              : undefined
+          }
+          overflowDirection={kind === Kind.Agent ? 'bottom' : 'top'}
         />
         {isThisShellFocused && config && (
           <Box paddingLeft={STATUS_INDICATOR_WIDTH} marginTop={1}>
