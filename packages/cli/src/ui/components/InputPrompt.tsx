@@ -80,6 +80,12 @@ import { useAlternateBuffer } from '../hooks/useAlternateBuffer.js';
 import { useIsHelpDismissKey } from '../utils/shortcutsHelp.js';
 import { useRepeatedKeyPress } from '../hooks/useRepeatedKeyPress.js';
 import { useKeyMatchers } from '../hooks/useKeyMatchers.js';
+import {
+  SHELL_COMMAND_EXPANSION_EMPTY_MESSAGE,
+  SHELL_COMMAND_EXPANSION_FAILURE_MESSAGE,
+  shouldExpandShellCommandInline,
+  useShellCommandExpansion,
+} from '../hooks/useShellCommandExpansion.js';
 
 /**
  * Returns if the terminal can be trusted to handle paste events atomically
@@ -275,6 +281,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   ]);
   const [expandedSuggestionIndex, setExpandedSuggestionIndex] =
     useState<number>(-1);
+  const hasShownShellExpansionHint = useRef(false);
   const shellHistory = useShellHistory(config.getProjectRoot(), config.storage);
   const shellHistoryData = shellHistory.history;
 
@@ -294,6 +301,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     shellHistoryData,
     reverseSearchActive,
   );
+  const { isExpanding, expandShellCommand } = useShellCommandExpansion({
+    config,
+  });
 
   const reversedUserMessages = useMemo(
     () => [...userMessages].reverse(),
@@ -437,6 +447,79 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       streamingState,
       setQueueErrorMessage,
       slashCommands,
+    ],
+  );
+
+  const tryExpandShellCommandInline = useCallback(
+    (submittedValue: string) => {
+      if (!shellModeActive || !shouldExpandShellCommandInline(submittedValue)) {
+        return false;
+      }
+
+      if (isExpanding) {
+        appEvents.emit(AppEvent.TransientMessage, {
+          message: 'Generating shell command...',
+          type: TransientMessageType.Hint,
+        });
+        return true;
+      }
+
+      const pendingInput = submittedValue;
+      setSuppressCompletion(true);
+      hasUserNavigatedSuggestions.current = false;
+      appEvents.emit(AppEvent.TransientMessage, {
+        message: 'Generating shell command...',
+        type: TransientMessageType.Hint,
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      (async () => {
+        const result = await expandShellCommand(pendingInput);
+
+        if (buffer.text !== pendingInput) {
+          return;
+        }
+
+        switch (result.status) {
+          case 'expanded':
+            buffer.setText(result.command);
+            resetCompletionState();
+            resetReverseSearchCompletionState();
+            resetCommandSearchCompletionState();
+            setExpandedSuggestionIndex(-1);
+            return;
+          case 'empty_request':
+            appEvents.emit(AppEvent.TransientMessage, {
+              message: SHELL_COMMAND_EXPANSION_EMPTY_MESSAGE,
+              type: TransientMessageType.Warning,
+            });
+            return;
+          case 'failed':
+          case 'unavailable':
+            appEvents.emit(AppEvent.TransientMessage, {
+              message: SHELL_COMMAND_EXPANSION_FAILURE_MESSAGE,
+              type: TransientMessageType.Warning,
+            });
+            return;
+          case 'aborted':
+            return;
+          default: {
+            const exhaustiveCheck: never = result;
+            return exhaustiveCheck;
+          }
+        }
+      })();
+
+      return true;
+    },
+    [
+      shellModeActive,
+      isExpanding,
+      expandShellCommand,
+      buffer,
+      resetCompletionState,
+      resetReverseSearchCompletionState,
+      resetCommandSearchCompletionState,
     ],
   );
 
@@ -797,7 +880,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         key.sequence === '?' &&
         key.insertable &&
         !shortcutsHelpVisible &&
-        buffer.text.length === 0
+        buffer.text.length === 0 &&
+        !shellModeActive
       ) {
         setShortcutsHelpVisible(true);
         return true;
@@ -974,6 +1058,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           (completion.activeSuggestionIndex <= 0 &&
             !hasUserNavigatedSuggestions.current))
       ) {
+        if (tryExpandShellCommandInline(buffer.text)) {
+          return true;
+        }
         handleSubmit(buffer.text);
         return true;
       }
@@ -1025,6 +1112,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                 setExpandedSuggestionIndex(-1);
                 hasUserNavigatedSuggestions.current = false;
                 if (buffer.text.trim()) {
+                  if (tryExpandShellCommandInline(buffer.text)) {
+                    return true;
+                  }
                   handleSubmit(buffer.text);
                 }
                 return true;
@@ -1184,6 +1274,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
             buffer.backspace();
             buffer.newline();
           } else {
+            if (tryExpandShellCommandInline(buffer.text)) {
+              return true;
+            }
             handleSubmit(buffer.text);
           }
         }
@@ -1309,6 +1402,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       keyMatchers,
       isHelpDismissKey,
       settings,
+      tryExpandShellCommandInline,
     ],
   );
 
@@ -1457,6 +1551,26 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       onSuggestionsVisibilityChange(shouldShowSuggestions);
     }
   }, [shouldShowSuggestions, onSuggestionsVisibilityChange]);
+
+  useEffect(() => {
+    const shouldShowHint =
+      shellModeActive && shouldExpandShellCommandInline(buffer.text);
+
+    if (!shouldShowHint) {
+      hasShownShellExpansionHint.current = false;
+      return;
+    }
+
+    if (hasShownShellExpansionHint.current) {
+      return;
+    }
+
+    appEvents.emit(AppEvent.TransientMessage, {
+      message: 'Press Enter to generate an editable shell command.',
+      type: TransientMessageType.Hint,
+    });
+    hasShownShellExpansionHint.current = true;
+  }, [buffer.text, shellModeActive]);
 
   const showAutoAcceptStyling =
     !shellModeActive && approvalMode === ApprovalMode.AUTO_EDIT;
