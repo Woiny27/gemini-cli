@@ -42,6 +42,13 @@ beforeEach(() => {
   // Reset themeManager state to ensure test isolation
   themeManager.resetForTesting();
 
+  // Silence noisy console output from passing tests. Tests that intentionally
+  // test logging behavior should use vi.mocked(console.log) or similar.
+  // console.error is handled separately below to capture act() warnings.
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
+
   actWarnings = [];
   consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
     const firstArg = args[0];
@@ -82,7 +89,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  consoleErrorSpy.mockRestore();
+  vi.restoreAllMocks();
 
   vi.unstubAllEnvs();
 
