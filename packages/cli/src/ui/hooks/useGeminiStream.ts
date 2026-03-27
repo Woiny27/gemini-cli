@@ -82,6 +82,7 @@ import type { UseHistoryManagerReturn } from './useHistoryManager.js';
 import { useLogger } from './useLogger.js';
 import { SHELL_COMMAND_NAME } from '../constants.js';
 import { mapToDisplay as mapTrackedToolCallsToDisplay } from './toolMapping.js';
+import { type LastOutput } from '../commands/types.js';
 import {
   useToolScheduler,
   type TrackedToolCall,
@@ -226,6 +227,7 @@ export const useGeminiStream = (
   terminalHeight: number,
   isShellFocused?: boolean,
   consumeUserHint?: () => string | null,
+  setLastOutput?: (output: LastOutput | undefined) => void,
 ) => {
   const [initError, setInitError] = useState<string | null>(null);
   const [retryStatus, setRetryStatus] = useState<RetryAttemptPayload | null>(
@@ -241,6 +243,10 @@ export const useGeminiStream = (
   const previousApprovalModeRef = useRef<ApprovalMode>(
     config.getApprovalMode(),
   );
+ Fix/copy-to-Capture-Slash-Command-Output
+  const [isResponding, setIsResponding] = useState<boolean>(false);
+  const fullAiResponseBufferRef = useRef<string>('');
+
   const [isResponding, setIsRespondingState] = useState<boolean>(false);
   const isRespondingRef = useRef<boolean>(false);
   const setIsResponding = useCallback(
@@ -250,6 +256,7 @@ export const useGeminiStream = (
     },
     [setIsRespondingState],
   );
+ main
   const [thought, thoughtRef, setThought] =
     useStateAndRef<ThoughtSummary | null>(null);
   const [pendingHistoryItem, pendingHistoryItemRef, setPendingHistoryItem] =
@@ -1350,6 +1357,8 @@ export const useGeminiStream = (
             break;
           case ServerGeminiEventType.Content:
             setLastGeminiActivityTime(Date.now());
+            fullAiResponseBufferRef.current += event.value;
+
             geminiMessageBuffer = handleContentEvent(
               event.value,
               geminiMessageBuffer,
@@ -1422,6 +1431,10 @@ export const useGeminiStream = (
           }
         }
       }
+      setLastOutput?.({
+        content: fullAiResponseBufferRef.current,
+      });
+
       if (toolCallRequests.length > 0) {
         if (pendingHistoryItemRef.current) {
           addItem(pendingHistoryItemRef.current, userMessageTimestamp);
@@ -1450,6 +1463,8 @@ export const useGeminiStream = (
       pendingHistoryItemRef,
       setPendingHistoryItem,
       setThought,
+      setLastOutput,
+      fullAiResponseBufferRef,
     ],
   );
   const submitQuery = useCallback(
@@ -1526,6 +1541,7 @@ export const useGeminiStream = (
               }
               startNewPrompt();
               setThought(null); // Reset thought when starting a new prompt
+              fullAiResponseBufferRef.current = '';
             }
 
             setIsResponding(true);
@@ -1643,6 +1659,7 @@ export const useGeminiStream = (
       startNewPrompt,
       getPromptCount,
       setThought,
+      fullAiResponseBufferRef,
       maybeAddSuppressedToolErrorNote,
       maybeAddLowVerbosityFailureNote,
       settings.merged.billing?.overageStrategy,
