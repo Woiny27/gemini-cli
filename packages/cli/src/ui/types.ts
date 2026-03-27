@@ -235,6 +235,10 @@ export type HistoryItemToolStats = HistoryItemBase & {
   type: 'tool_stats';
 };
 
+export type HistoryItemPerformanceStats = HistoryItemBase & {
+  type: 'performance_stats';
+};
+
 export type HistoryItemModel = HistoryItemBase & {
   type: 'model';
   model: string;
@@ -383,6 +387,7 @@ export type HistoryItemWithoutId =
   | HistoryItemStats
   | HistoryItemModelStats
   | HistoryItemToolStats
+  | HistoryItemPerformanceStats
   | HistoryItemModel
   | HistoryItemQuit
   | HistoryItemCompression
@@ -408,6 +413,7 @@ export enum MessageType {
   STATS = 'stats',
   MODEL_STATS = 'model_stats',
   TOOL_STATS = 'tool_stats',
+  PERFORMANCE_STATS = 'performance_stats',
   QUIT = 'quit',
   GEMINI = 'gemini',
   COMPRESSION = 'compression',
@@ -458,6 +464,11 @@ export type Message =
     }
   | {
       type: MessageType.TOOL_STATS;
+      timestamp: Date;
+      content?: string;
+    }
+  | {
+      type: MessageType.PERFORMANCE_STATS;
       timestamp: Date;
       content?: string;
     }
