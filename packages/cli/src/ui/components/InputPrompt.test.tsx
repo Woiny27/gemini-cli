@@ -323,6 +323,7 @@ describe('InputPrompt', () => {
       navigateUp: vi.fn(),
       navigateDown: vi.fn(),
       handleSubmit: vi.fn(),
+      saveDraft: vi.fn(),
     };
     mockedUseInputHistory.mockImplementation(({ onSubmit }) => {
       mockInputHistory.handleSubmit = vi.fn((val) => onSubmit(val));
@@ -4622,6 +4623,7 @@ describe('InputPrompt', () => {
           return true;
         },
         handleSubmit: vi.fn((val) => onSubmit(val)),
+        saveDraft: vi.fn(),
       }));
     });
 
